@@ -47,12 +47,14 @@ public class WorkCardService {
     private final WorkCardRepository workCardRepository;
     private final AircraftRepository aircraftRepository;
     private final ReleaseService releaseService;
+    private final AdService adService;
 
     public WorkCardService(WorkCardRepository workCardRepository, AircraftRepository aircraftRepository,
-                           ReleaseService releaseService) {
+                           ReleaseService releaseService, AdService adService) {
         this.workCardRepository = workCardRepository;
         this.aircraftRepository = aircraftRepository;
         this.releaseService = releaseService;
+        this.adService = adService;
     }
 
     @Transactional(readOnly = true)
@@ -180,6 +182,8 @@ public class WorkCardService {
         card = workCardRepository.save(card);
         releaseService.invalidateOnFactChange(card.getAircraftId(),
                 "关联工卡 " + card.getCardNo() + " 状态变为「进行中」");
+        adService.recalcByWorkCardChange(card.getId(),
+                "工卡 " + card.getCardNo() + " 状态变为「进行中」，相关适航指令落实结果复核");
         return toView(card, tailMap());
     }
 
@@ -204,6 +208,9 @@ public class WorkCardService {
         card = workCardRepository.save(card);
         releaseService.invalidateOnFactChange(card.getAircraftId(),
                 "关联工卡 " + card.getCardNo() + " 状态变为「待检验」");
+        // 关闭后被重新打开（WAIT_INSP 可来自重开路径）：以该工卡为凭证的"已落实"必须回待核实
+        adService.recalcByWorkCardChange(card.getId(),
+                "工卡 " + card.getCardNo() + " 重新打开为「待检验」，原适航指令落实结果复核");
         return toView(card, tailMap());
     }
 
@@ -238,7 +245,68 @@ public class WorkCardService {
         card = workCardRepository.save(card);
         releaseService.invalidateOnFactChange(card.getAircraftId(),
                 "关联工卡 " + card.getCardNo() + " 被取消");
+        adService.recalcByWorkCardChange(card.getId(),
+                "工卡 " + card.getCardNo() + " 已取消，以其为凭证的适航指令落实回待核实");
         return toView(card, tailMap());
+    }
+
+    /**
+     * 模块七验收动作：已关闭工卡重新打开（退回到待检验）。
+     * 关闭是工卡模块的终态，这里仅作为适航指令场景的受控操作显式开放：
+     * 以该工卡为落实凭证的"已落实"必须在同事务回到待核实（历史关联保留）。
+     */
+    @Transactional
+    public Views.WorkCardView reopen(Long id, String operator) {
+        WorkCard card = requireCard(id);
+        if (!"CLOSED".equals(card.getStatus())) {
+            throw new BizException("工卡 " + card.getCardNo() + " 当前为「"
+                    + MroDict.cardStatusName(card.getStatus()) + "」，只有已关闭工卡可以重新打开");
+        }
+        card.setStatus("WAIT_INSP");
+        card.setInspector(null);
+        card.setUpdatedAt(LocalDateTime.now());
+        card = workCardRepository.save(card);
+        releaseService.invalidateOnFactChange(card.getAircraftId(),
+                "关联工卡 " + card.getCardNo() + " 关闭后被重新打开");
+        adService.recalcByWorkCardChange(card.getId(),
+                "工卡 " + card.getCardNo() + " 关闭后被重新打开（操作人：" + safe(operator) + "），原适航指令落实回待核实");
+        return toView(card, tailMap());
+    }
+
+    /**
+     * 模块七验收动作：把工卡改挂到另一架飞机。
+     * 原飞机上以该工卡为凭证的"已落实"立即回待核实；新飞机的清单不受影响（需重新关联本机工卡）。
+     */
+    @Transactional
+    public Views.WorkCardView reassign(Long id, Long targetAircraftId, String operator) {
+        WorkCard card = requireCard(id);
+        if (targetAircraftId == null) {
+            throw new BizException("请选择改挂的目标飞机");
+        }
+        Aircraft target = aircraftRepository.findById(targetAircraftId)
+                .orElseThrow(() -> new BizException("目标飞机不存在：id=" + targetAircraftId));
+        if (targetAircraftId.equals(card.getAircraftId())) {
+            throw new BizException("工卡 " + card.getCardNo() + " 已经属于 " + target.getTailNo() + "，无需改挂");
+        }
+        if (MroDict.AIRWORTHY_STORED.equals(target.getAirworthy())) {
+            throw new BizException("目标飞机 " + target.getTailNo() + " 已封存，不能把工卡改挂到封存机");
+        }
+        Long oldAircraftId = card.getAircraftId();
+        card.setAircraftId(targetAircraftId);
+        card.setUpdatedAt(LocalDateTime.now());
+        card = workCardRepository.save(card);
+        releaseService.invalidateOnFactChange(oldAircraftId,
+                "关联工卡 " + card.getCardNo() + " 已改挂到其他飞机");
+        releaseService.invalidateOnFactChange(targetAircraftId,
+                "新增关联工卡 " + card.getCardNo() + "（由其他飞机改挂）");
+        adService.recalcByWorkCardChange(card.getId(),
+                "工卡 " + card.getCardNo() + " 由原飞机改挂到 " + target.getTailNo()
+                        + "（操作人：" + safe(operator) + "），原飞机的适航指令落实回待核实");
+        return toView(card, tailMap());
+    }
+
+    private String safe(String s) {
+        return s == null || s.isBlank() ? "未署名" : s.trim();
     }
 
     private WorkCard requireCard(Long id) {

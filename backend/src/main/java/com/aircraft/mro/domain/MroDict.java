@@ -127,6 +127,40 @@ public final class MroDict {
     /** 处在审签链上、上游一变就要立即失效的状态（草稿允许继续修订，不在其列） */
     public static final List<String> RELEASE_PENDING_STATUSES = List.of(REL_WAIT_MECH, REL_WAIT_QA);
 
+    // ---------------- 模块七：适航指令落实追踪 ----------------
+    /** 未到期：任一阈值都还没到临期窗口 */
+    public static final String AD_NOT_DUE = "NOT_DUE";
+    /** 临期：最早到限维度进入预警提前量 */
+    public static final String AD_NEAR_DUE = "NEAR_DUE";
+    /** 超期：最早到限维度已越过截止阈值且尚未落实 */
+    public static final String AD_OVERDUE = "OVERDUE";
+    /** 已落实：关联有效关闭工卡 + 有效证据，经服务端复核成立 */
+    public static final String AD_COMPLIED = "COMPLIED";
+    /** 待核实：累计值缺失 / 机号边界不完整 / 阈值矛盾 / 凭证失效，不得误判为不适用或已落实 */
+    public static final String AD_PENDING = "PENDING";
+    /** 不适用：机型或机号段明确不覆盖该飞机 */
+    public static final String AD_NOT_APPLICABLE = "NOT_APPLICABLE";
+
+    private static final Map<String, String> AD_STATUS = Map.of(
+            AD_NOT_DUE, "未到期",
+            AD_NEAR_DUE, "临期",
+            AD_OVERDUE, "超期",
+            AD_COMPLIED, "已落实",
+            AD_PENDING, "待核实",
+            AD_NOT_APPLICABLE, "不适用");
+
+    /** 修订版状态 */
+    private static final Map<String, String> AD_REVISION_STATUS = Map.of(
+            "DRAFT", "草稿",
+            "EFFECTIVE", "生效中",
+            "SUPERSEDED", "已被取代");
+
+    /** 维度 */
+    private static final Map<String, String> AD_DIM = Map.of(
+            "DATE", "日历日期",
+            "FH", "飞行小时",
+            "CYCLE", "起落次数");
+
     // ---------------- 取值方法 ----------------
 
     public static boolean isValidModel(String model) {
@@ -244,5 +278,19 @@ public final class MroDict {
             return (int) Math.ceil(v / (double) HOUR_PER_DAY);
         }
         return v;
+    }
+
+    // ---------------- 模块七取值方法 ----------------
+
+    public static String adStatusName(String status) {
+        return status == null ? "" : AD_STATUS.getOrDefault(status, status);
+    }
+
+    public static String adRevisionStatusName(String status) {
+        return status == null ? "" : AD_REVISION_STATUS.getOrDefault(status, status);
+    }
+
+    public static String adDimName(String dim) {
+        return dim == null ? "" : AD_DIM.getOrDefault(dim, dim);
     }
 }

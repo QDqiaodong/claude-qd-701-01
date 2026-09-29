@@ -339,4 +339,195 @@ public final class Views {
             boolean idempotent,
             String message) {
     }
+
+    // ============================== 模块七：适航指令落实追踪 ==============================
+
+    /** 指令目录行：指令头 + 当前最新生效版的关键信息 */
+    public record AdDirectiveView(
+            Long id,
+            String adNo,
+            String authority,
+            String title,
+            String latestRevision,
+            Long currentRevisionId,
+            String revisionStatus,
+            String revisionStatusName,
+            String applicableModels,
+            String tailRangeFrom,
+            String tailRangeTo,
+            LocalDate effectiveDate,
+            LocalDate dueDate,
+            java.math.BigDecimal dueFh,
+            Integer dueCycles,
+            Integer warnDays,
+            java.math.BigDecimal warnFh,
+            Integer warnCycles,
+            int revisionCount,
+            LocalDateTime publishedAt) {
+    }
+
+    /** 修订版（历史版本列表） */
+    public record AdRevisionView(
+            Long id,
+            Long directiveId,
+            String adNo,
+            String revisionNo,
+            String title,
+            String status,
+            String statusName,
+            LocalDate effectiveDate,
+            String applicableModels,
+            String tailRangeFrom,
+            String tailRangeTo,
+            LocalDate dueDate,
+            java.math.BigDecimal dueFh,
+            Integer dueCycles,
+            Integer warnDays,
+            java.math.BigDecimal warnFh,
+            Integer warnCycles,
+            String revisionNote,
+            boolean frozen,
+            LocalDateTime publishedAt) {
+    }
+
+    /** 落实清单行（带飞机与阈值余量） */
+    public record AdComplianceView(
+            Long id,
+            Long revisionId,
+            Long directiveId,
+            String adNo,
+            String revisionNo,
+            String directiveTitle,
+            Long aircraftId,
+            String tailNo,
+            String model,
+            String airline,
+            String status,
+            String statusName,
+            boolean applicable,
+            String pendingReasons,
+            String limitingDim,
+            String limitingDimName,
+            Integer daysToDue,
+            java.math.BigDecimal fhRemaining,
+            Integer cycleRemaining,
+            java.math.BigDecimal aircraftFh,
+            Integer aircraftCycles,
+            boolean fhMissing,
+            boolean cyclesMissing,
+            Long calcTick,
+            LocalDateTime calcAt,
+            LocalDateTime compliedAt,
+            String compliedBy,
+            int validLinkCount,
+            int validEvidenceCount) {
+    }
+
+    /** 落实工卡关联（含当前工卡事实，前端可直接展示失效原因） */
+    public record AdLinkView(
+            Long id,
+            Long workCardId,
+            String cardNo,
+            Long linkedAircraftId,
+            String linkedTailNo,
+            String linkedBy,
+            LocalDateTime linkedAt,
+            boolean valid,
+            String invalidReason,
+            LocalDateTime invalidatedAt,
+            String currentCardStatus,
+            String currentCardStatusName,
+            Long currentAircraftId,
+            String currentTailNo,
+            boolean cardClosed) {
+    }
+
+    /** 证据 */
+    public record AdEvidenceView(
+            Long id,
+            String evidenceType,
+            String evidenceTypeName,
+            String title,
+            String evidenceRef,
+            String fileName,
+            String registeredBy,
+            LocalDateTime registeredAt,
+            boolean voided,
+            String voidReason,
+            LocalDateTime voidedAt) {
+    }
+
+    /** 审计时间线 */
+    public record AdEventView(
+            Long id,
+            String eventType,
+            String eventName,
+            Long revisionId,
+            Long complianceId,
+            Long aircraftId,
+            String operator,
+            String detail,
+            String fromStatus,
+            String fromStatusName,
+            String toStatus,
+            String toStatusName,
+            LocalDateTime eventAt) {
+    }
+
+    /** 清单详情：清单行 + 关联（含失效历史）+ 证据（含作废历史）+ 时间线 */
+    public record AdComplianceDetail(
+            AdComplianceView compliance,
+            List<AdLinkView> links,
+            List<AdEvidenceView> evidence,
+            List<AdEventView> events) {
+    }
+
+    /** 重算作业行 */
+    public record AdRecalcJobView(
+            Long id,
+            String scopeType,
+            String scopeTypeName,
+            Long directiveId,
+            String adNo,
+            String revisionNo,
+            Long revisionId,
+            Long aircraftId,
+            String tailNo,
+            String triggerReason,
+            String status,
+            String statusName,
+            int totalCount,
+            int successCount,
+            int failedCount,
+            int naCount,
+            boolean running,
+            int progressPercent,
+            LocalDateTime startedAt,
+            LocalDateTime finishedAt,
+            String createdBy) {
+    }
+
+    /** 重算作业明细（逐机失败原因） */
+    public record AdRecalcItemView(
+            Long id,
+            Long aircraftId,
+            String tailNo,
+            String model,
+            Long revisionId,
+            String status,
+            String statusName,
+            String errorMessage,
+            int attemptCount,
+            LocalDateTime updatedAt) {
+    }
+
+    /** 顶部总览 */
+    public record AdOverview(
+            long directiveCount,
+            long overdue,
+            long nearDue,
+            long pending,
+            long complied,
+            long runningJobCount) {
+    }
 }

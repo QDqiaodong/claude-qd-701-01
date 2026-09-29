@@ -35,15 +35,18 @@ public class AircraftService {
     private final WorkCardSummaryRepository summaryRepository;
     private final BayRepository bayRepository;
     private final ReleaseService releaseService;
+    private final AdService adService;
 
     public AircraftService(AircraftRepository aircraftRepository,
                            WorkCardSummaryRepository summaryRepository,
                            BayRepository bayRepository,
-                           ReleaseService releaseService) {
+                           ReleaseService releaseService,
+                           AdService adService) {
         this.aircraftRepository = aircraftRepository;
         this.summaryRepository = summaryRepository;
         this.bayRepository = bayRepository;
         this.releaseService = releaseService;
+        this.adService = adService;
     }
 
     @Transactional(readOnly = true)
@@ -179,10 +182,13 @@ public class AircraftService {
         if (hour.compareTo(BigDecimal.ZERO) <= 0 || cycles <= 0) {
             throw new BizException("本次飞行小时与起落次数都必须大于 0");
         }
-        aircraft.setTotalFh(aircraft.getTotalFh().add(hour));
-        aircraft.setTotalCycles(aircraft.getTotalCycles() + cycles);
+        aircraft.setTotalFh(aircraft.getTotalFh() == null ? hour : aircraft.getTotalFh().add(hour));
+        aircraft.setTotalCycles(aircraft.getTotalCycles() == null ? cycles : aircraft.getTotalCycles() + cycles);
         aircraft.setUpdatedAt(LocalDateTime.now());
-        return toView(aircraftRepository.save(aircraft));
+        Aircraft saved = aircraftRepository.save(aircraft);
+        // 适航指令：登记一次飞行只重算这一架飞机的生效版清单（同一事务、行锁，按最新累计值收敛）
+        adService.recalcAircraftOnFlight(id);
+        return toView(saved);
     }
 
     private Views.AircraftView toView(Aircraft aircraft) {

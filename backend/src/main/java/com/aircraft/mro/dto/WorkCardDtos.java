@@ -53,4 +53,22 @@ public final class WorkCardDtos {
         @NotBlank(message = "检验员不能为空")
         private String inspector;
     }
+
+    /** 模块七：已关闭工卡重新打开（退回到待检验） */
+    @Data
+    public static class ReopenReq {
+
+        @NotBlank(message = "操作人不能为空")
+        private String operator;
+    }
+
+    /** 模块七：工卡改挂到另一架飞机 */
+    @Data
+    public static class ReassignReq {
+
+        private Long targetAircraftId;
+
+        @NotBlank(message = "操作人不能为空")
+        private String operator;
+    }
 }

@@ -33,6 +33,21 @@
 --           可用两个不同终审人同时点"终审通过"验收冲突（只有一个成功）
 --   [REL-5] 放行后才可出位：RO-2026-0005（B-9005=17 号机，BAY-A06）已放行未出位，
 --           机位"安排出位"成功；B-9006（18 号机，BAY-C07）没有任何放行，出位被统一阻断
+--
+-- 模块七（适航指令落实追踪 AD）验收示例：
+--   [AD-01] 日期先到期：CAD-2026-001 R1（B737 全系，日期阈值 20 天后、提前 30 天预警）
+--   [AD-02] 飞行小时先到期：CAD-2025-014 R1（B737 全系，FH 25000 先于起落 30000 到限）
+--   [AD-03] 起落次数先到期：CAD-2026-007 R1（B737 全系，CYC 18500 先于 FH 33000 到限）
+--   [AD-04] 日期先到期 + 已落实：CAD-2026-004 R1（A320，B-7325 凭已关闭工卡 WC-2026-0201 落实）
+--   [AD-05] 范围不适用：CAD-2026-005 R0 仅 B-11001~B-11099 段 ARJ21，其余机号不适用
+--   [AD-06] 累计值缺失：B-11099（21 号机）总 FH/总起落未录入（NULL）→ 待核实
+--   [AD-07] 阈值互相矛盾：CAD-2026-008 R0 截止日期早于生效日期 → 待核实
+--   [AD-08] 机号范围边界不完整：CAD-2026-009 R0 只填了上界/下界 → 待核实
+--   [AD-09] 历史版本保留：CAD-2026-011 存在 R0（已被 R1 取代），R0 的判断与证据冻结留存
+--   [AD-10] 工卡改挂：CAD-2026-010 R1，B-6571 的落实工卡 WC-2026-0203 已改挂 B-7411 → 回待核实
+--   [AD-11] 工卡取消/证据作废：CAD-2026-020 R1 工卡 WC-2026-0204 已取消；
+--           CAD-2026-001 R1 的 B-6032 落实证据已登记作废 → 均回待核实（关联不删除）
+--   [AD-12] 大批量重算：机队 21 架，支持按指令创建重算作业，可注入部分失败并对失败项续跑
 -- ============================================================================
 
 SET NAMES utf8mb4;
@@ -41,6 +56,14 @@ SET FOREIGN_KEY_CHECKS = 0;
 CREATE DATABASE IF NOT EXISTS aircraft_mro DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE aircraft_mro;
 
+DROP TABLE IF EXISTS ad_recalc_job_item;
+DROP TABLE IF EXISTS ad_recalc_job;
+DROP TABLE IF EXISTS ad_event;
+DROP TABLE IF EXISTS ad_evidence;
+DROP TABLE IF EXISTS ad_compliance_link;
+DROP TABLE IF EXISTS ad_compliance;
+DROP TABLE IF EXISTS ad_revision;
+DROP TABLE IF EXISTS ad_directive;
 DROP TABLE IF EXISTS release_event;
 DROP TABLE IF EXISTS release_snapshot_defect;
 DROP TABLE IF EXISTS release_snapshot_card;
@@ -100,8 +123,8 @@ CREATE TABLE aircraft (
     tail_no         VARCHAR(16)  NOT NULL COMMENT '机号（注册号）',
     model           VARCHAR(16)  NOT NULL COMMENT '机型：B737 / A320 / A330 / ARJ21',
     airline         VARCHAR(64)  NOT NULL COMMENT '所属航司',
-    total_fh        DECIMAL(12, 2) NOT NULL DEFAULT 0 COMMENT '总飞行小时',
-    total_cycles    INT          NOT NULL DEFAULT 0 COMMENT '总起落次数',
+    total_fh        DECIMAL(12, 2) NULL COMMENT '总飞行小时，NULL=累计值尚未录入（适航指令进入待核实）',
+    total_cycles    INT           NULL COMMENT '总起落次数，NULL=累计值尚未录入（适航指令进入待核实）',
     airworthy       VARCHAR(16)  NOT NULL COMMENT '适航状态：AIRWORTHY 适航 / GROUNDED 停场待修 / INSPECTION 定检中 / STORED 封存',
     note            VARCHAR(128) NULL COMMENT '备注',
     updated_at      DATETIME     NULL,
@@ -132,6 +155,13 @@ INSERT INTO aircraft (id, tail_no, model, airline, total_fh, total_cycles, airwo
     (16, 'B-9004', 'ARJ21', '南岭快线航空',  8820.00,  9300, 'AIRWORTHY',  '周检完工，待质量终审', DATE_SUB(NOW(), INTERVAL 1 DAY)),
     (17, 'B-9005', 'A320',  '华夏长风航空', 20310.00, 14880, 'AIRWORTHY',  '终审已放行，等待出位', DATE_SUB(NOW(), INTERVAL 2 DAY)),
     (18, 'B-9006', 'ARJ21', '北疆支线航空',  6500.00,  7120, 'AIRWORTHY',  '定检完工（尚未发起放行）', DATE_SUB(NOW(), INTERVAL 2 DAY));
+
+-- 模块七：19/20 号机落在机号段 B-11001~B-11099（AD-005 适用）；
+--         21 号机是新机交付，总飞行小时/总起落次数尚未录入（NULL）→ 任何累计阈值都判「待核实」
+INSERT INTO aircraft (id, tail_no, model, airline, total_fh, total_cycles, airworthy, note, updated_at) VALUES
+    (19, 'B-11001', 'ARJ21', '北疆支线航空',  5400.00,  6100, 'AIRWORTHY', '高原支线运营',          DATE_SUB(NOW(), INTERVAL 1 DAY)),
+    (20, 'B-11030', 'ARJ21', '北疆支线航空',  7800.00,  8450, 'AIRWORTHY', '北疆快线运营',          DATE_SUB(NOW(), INTERVAL 2 DAY)),
+    (21, 'B-11099', 'ARJ21', '北疆支线航空',  NULL,     NULL, 'AIRWORTHY', '新机交付，累计值待录入', DATE_SUB(NOW(), INTERVAL 1 DAY));
 
 -- ----------------------------------------------------------------------------
 -- 模块三：定检工卡
@@ -188,6 +218,17 @@ INSERT INTO work_card (id, card_no, aircraft_id, check_type, title, planned_hour
     (24, 'WC-2026-0109', 18, 'ROUTINE',  '导航数据库版本核对',          1.50,  1.50, DATE_SUB(NOW(), INTERVAL 3 DAY), DATE_SUB(NOW(), INTERVAL 2 DAY), 'CLOSED', '钱明亮', '周国平', DATE_SUB(NOW(), INTERVAL 2 DAY)),
     -- 这张是 B-9003 放行快照之后新增的未闭环工卡（验收 [REL-3]：审签中工卡状态变化导致失效）
     (23, 'WC-2026-0108', 15, 'SPECIAL',  '快照后追加：客舱 PA 放大器排故', 3.00, 0.00, NULL, NULL, 'ASSIGNED', NULL, NULL, DATE_SUB(NOW(), INTERVAL 2 HOUR));
+
+-- 模块七：适航指令落实工卡
+--   0201：B-7325(7) 已关闭，CAD-2026-004 R1 的有效落实凭证（已落实示例）
+--   0202：关闭后又被重新打开（当前待检验），CAD-2026-005 R0 历史版本的落实凭证，在 R0 被取代时已冻结
+--   0203：原本挂在 B-6571(3) 名下作为 CAD-2026-010 R1 落实工卡，后改挂 B-7411(8)（已关闭）→ 原落实回待核实
+--   0204：已取消工卡，CAD-2026-020 R1 历史曾关联 → 落实回待核实
+INSERT INTO work_card (id, card_no, aircraft_id, check_type, title, planned_hour, actual_hour, start_time, end_time, status, executor, inspector, updated_at) VALUES
+    (25, 'WC-2026-0201', 7,  'SPECIAL', 'AD 落实：B-7325 A320 升降舵铰链检查', 6.00, 6.20, DATE_SUB(NOW(), INTERVAL 12 DAY), DATE_SUB(NOW(), INTERVAL 11 DAY), 'CLOSED',    '陈志强', '罗建军', DATE_SUB(NOW(), INTERVAL 11 DAY)),
+    (26, 'WC-2026-0202', 20, 'SPECIAL', 'AD 落实（历史 R0）：B-11030 缝翼作动器检查', 4.00, 4.10, DATE_SUB(NOW(), INTERVAL 30 DAY), DATE_SUB(NOW(), INTERVAL 26 DAY), 'WAIT_INSP', '孙立伟', NULL, DATE_SUB(NOW(), INTERVAL 2 HOUR)),
+    (27, 'WC-2026-0203', 8,  'SPECIAL', 'AD 落实：货舱火警探测器改装（原派 B-6571，改挂 B-7411）', 10.00, 10.50, DATE_SUB(NOW(), INTERVAL 9 DAY), DATE_SUB(NOW(), INTERVAL 7 DAY), 'CLOSED', '刘振华', '周国平', DATE_SUB(NOW(), INTERVAL 6 DAY)),
+    (28, 'WC-2026-0204', 3,  'SPECIAL', 'AD 落实（已取消）：左发防冰管路检查', 3.50, 0.00, DATE_SUB(NOW(), INTERVAL 5 DAY), NULL, 'CANCELED', '王大鹏', NULL, DATE_SUB(NOW(), INTERVAL 3 DAY));
 
 -- ----------------------------------------------------------------------------
 -- 模块四：故障保留
@@ -469,5 +510,342 @@ INSERT INTO release_event (release_id, event_type, operator, detail, snapshot_ve
     (5, 'SUBMIT', '赵岩', '提交进入待机械放行，已生成 v1 证据快照', 1, DATE_SUB(NOW(), INTERVAL 8 HOUR)),
     (5, 'MECH_SIGN', '陈志强', '机械放行通过，提交质量终审', 1, DATE_SUB(NOW(), INTERVAL 7 HOUR)),
     (5, 'QA_SIGN', '周国平', '质量终审通过，出厂放行生效（证据快照 v1），允许出位', 1, DATE_SUB(NOW(), INTERVAL 6 HOUR));
+
+-- ----------------------------------------------------------------------------
+-- 模块七：适航指令落实追踪（AD Tracking）
+--   ad_directive          指令头（编号唯一），一个编号下多个修订版
+--   ad_revision           修订版（不可变：生效后改范围/阈值必须出新版本），
+--                         存三类截止阈值 + 三类临期预警提前量 + 适用机型/机号段
+--   ad_compliance         落实清单：(修订版, 飞机) 唯一，每个当前结果一行，旧版本行保留
+--   ad_compliance_link    落实-工卡关联：(清单, 工卡) 唯一，重复关联不产生两条；
+--                         工卡取消/重开/改挂后只置失效标志，关联行不删除（历史不消失）
+--   ad_evidence           落实证据：登记文本/文件，可作废但不删除
+--   ad_event              append-only 状态变化/证据/重算审计时间线
+--   ad_recalc_job(_item)  批量重算作业与逐机明细：范围/进度/成功/失败原因，刷新后一致
+-- ----------------------------------------------------------------------------
+CREATE TABLE ad_directive (
+    id             BIGINT       NOT NULL AUTO_INCREMENT,
+    ad_no          VARCHAR(32)  NOT NULL COMMENT '适航指令编号，如 CAD-2026-001',
+    authority      VARCHAR(64)  NOT NULL COMMENT '发布机构，如 CAAC 华东局',
+    title          VARCHAR(255) NOT NULL COMMENT '指令标题',
+    latest_revision VARCHAR(16) NOT NULL DEFAULT 'R0' COMMENT '当前最新修订版号',
+    created_at     DATETIME     NOT NULL,
+    updated_at     DATETIME     NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_ad_no (ad_no)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '适航指令（编号头）';
+
+CREATE TABLE ad_revision (
+    id               BIGINT       NOT NULL AUTO_INCREMENT,
+    directive_id     BIGINT       NOT NULL,
+    revision_no      VARCHAR(16)  NOT NULL COMMENT '修订版号：R0 原版 / R1 第 1 次修订 …',
+    title            VARCHAR(255) NOT NULL COMMENT '该版标题（修订可改题）',
+    status           VARCHAR(16)  NOT NULL COMMENT 'DRAFT 草稿 / EFFECTIVE 生效 / SUPERSEDED 已被取代（只读冻结）',
+    effective_date   DATE         NOT NULL COMMENT '生效日期',
+    applicable_models VARCHAR(128) NOT NULL COMMENT '适用机型，分号分隔，如 B737;A320',
+    tail_range_from  VARCHAR(16)  NULL COMMENT '机号范围下界（按机号数字部分比较），NULL=不限',
+    tail_range_to    VARCHAR(16)  NULL COMMENT '机号范围上界，NULL=不限；只填一边=边界不完整→待核实',
+    -- 三类截止阈值：NULL 表示该维度不限制
+    due_date         DATE         NULL COMMENT '日历日期截止阈值',
+    due_fh           DECIMAL(12, 2) NULL COMMENT '累计飞行小时截止阈值',
+    due_cycles       INT          NULL COMMENT '累计起落次数截止阈值',
+    -- 三类临期预警提前量（各自独立配置）
+    warn_days        INT          NOT NULL DEFAULT 0 COMMENT '提前多少天进入临期',
+    warn_fh          DECIMAL(12, 2) NOT NULL DEFAULT 0 COMMENT '剩余多少飞行小时进入临期',
+    warn_cycles      INT          NOT NULL DEFAULT 0 COMMENT '剩余多少起落进入临期',
+    revision_note    VARCHAR(255) NULL COMMENT '修订说明/变更摘要',
+    created_at       DATETIME     NOT NULL,
+    published_at     DATETIME     NULL COMMENT '生效发布时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_ad_revision (directive_id, revision_no),
+    KEY idx_revision_status (status)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '适航指令修订版（不可变历史）';
+
+CREATE TABLE ad_compliance (
+    id               BIGINT       NOT NULL AUTO_INCREMENT,
+    revision_id      BIGINT       NOT NULL,
+    aircraft_id      BIGINT       NOT NULL,
+    status           VARCHAR(16)  NOT NULL COMMENT 'NOT_DUE 未到期 / NEAR_DUE 临期 / OVERDUE 超期 / COMPLIED 已落实 / PENDING 待核实 / NOT_APPLICABLE 不适用',
+    applicable       TINYINT      NOT NULL DEFAULT 1 COMMENT '该修订版是否适用于该机',
+    pending_reasons  VARCHAR(512) NULL COMMENT '待核实原因，分号分隔（累计值缺失/边界不完整/阈值矛盾/工卡失效/证据缺失）',
+    limiting_dim     VARCHAR(8)   NULL COMMENT '最早到限维度：DATE / FH / CYCLE',
+    days_to_due      INT          NULL COMMENT '距日期截止的天数（负=已过天数）',
+    fh_remaining     DECIMAL(12, 2) NULL COMMENT '飞行小时余量（负=已超）',
+    cycle_remaining  INT          NULL COMMENT '起落余量（负=已超）',
+    calc_tick        BIGINT       NOT NULL DEFAULT 0 COMMENT '本次计算所依据的数据版本 tick（旧 tick 不得覆盖新 tick）',
+    calc_at          DATETIME     NULL COMMENT '最近一次计算时间',
+    complied_at      DATETIME     NULL COMMENT '最近一次落实生效时间',
+    complied_by      VARCHAR(32)  NULL COMMENT '落实登记人',
+    created_at       DATETIME     NOT NULL,
+    updated_at       DATETIME     NOT NULL,
+    version          BIGINT       NOT NULL DEFAULT 0 COMMENT 'JPA 乐观锁',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_compliance (revision_id, aircraft_id),
+    KEY idx_comp_aircraft (aircraft_id),
+    KEY idx_comp_status (status)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '适航指令落实清单（按修订版+飞机）';
+
+CREATE TABLE ad_compliance_link (
+    id               BIGINT       NOT NULL AUTO_INCREMENT,
+    compliance_id    BIGINT       NOT NULL,
+    work_card_id     BIGINT       NOT NULL,
+    card_no          VARCHAR(32)  NOT NULL COMMENT '关联时工卡号（固化，工卡后续变化不影响此列）',
+    linked_aircraft_id BIGINT     NOT NULL COMMENT '关联时工卡所属飞机（用于发现改挂）',
+    linked_by        VARCHAR(32)  NOT NULL,
+    linked_at        DATETIME     NOT NULL,
+    valid_flag       TINYINT      NOT NULL DEFAULT 1 COMMENT '1 当前有效 / 0 已失效（取消/重开/改挂），行保留不删',
+    invalid_reason   VARCHAR(255) NULL,
+    invalidated_at   DATETIME     NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_comp_card (compliance_id, work_card_id),
+    KEY idx_link_card (work_card_id)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '落实-工卡关联（历史不删除）';
+
+CREATE TABLE ad_evidence (
+    id               BIGINT       NOT NULL AUTO_INCREMENT,
+    compliance_id    BIGINT       NOT NULL,
+    evidence_type    VARCHAR(16)  NOT NULL COMMENT 'REGISTER 登记文本 / FILE 上传文件',
+    title            VARCHAR(128) NOT NULL COMMENT '证据标题',
+    evidence_ref     VARCHAR(255) NULL COMMENT '文本登记号或文件存储路径',
+    file_name        VARCHAR(255) NULL COMMENT '原始文件名',
+    registered_by    VARCHAR(32)  NOT NULL,
+    registered_at    DATETIME     NOT NULL,
+    void_flag        TINYINT      NOT NULL DEFAULT 0 COMMENT '0 有效 / 1 已作废（行保留）',
+    void_reason      VARCHAR(255) NULL,
+    voided_at        DATETIME     NULL,
+    PRIMARY KEY (id),
+    KEY idx_evidence_comp (compliance_id)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '适航指令落实证据（可作废不删除）';
+
+CREATE TABLE ad_event (
+    id               BIGINT       NOT NULL AUTO_INCREMENT,
+    directive_id     BIGINT       NOT NULL,
+    revision_id      BIGINT       NULL,
+    compliance_id    BIGINT       NULL,
+    aircraft_id      BIGINT       NULL,
+    event_type       VARCHAR(24)  NOT NULL COMMENT 'REVISION_PUBLISH/RECALC/STATUS_CHANGE/COMPLY/LINK/EVIDENCE/EVIDENCE_VOID/RECALC_JOB 等',
+    operator         VARCHAR(32)  NOT NULL,
+    detail           VARCHAR(512) NOT NULL,
+    from_status      VARCHAR(16)  NULL,
+    to_status        VARCHAR(16)  NULL,
+    event_at         DATETIME     NOT NULL,
+    PRIMARY KEY (id),
+    KEY idx_ad_event_directive (directive_id, event_at),
+    KEY idx_ad_event_comp (compliance_id, event_at)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '适航指令审计事件（append-only）';
+
+CREATE TABLE ad_recalc_job (
+    id               BIGINT       NOT NULL AUTO_INCREMENT,
+    scope_type       VARCHAR(16)  NOT NULL COMMENT 'REVISION 按指令修订版 / FLEET 全机队 / AIRCRAFT 单架飞机',
+    directive_id     BIGINT       NULL,
+    revision_id      BIGINT       NULL,
+    aircraft_id      BIGINT       NULL,
+    trigger_reason   VARCHAR(255) NOT NULL,
+    status           VARCHAR(16)  NOT NULL COMMENT 'RUNNING 运行中 / DONE 全部成功 / PARTIAL_FAILED 部分失败 / DONE_WITH_SKIP 完成（有不适用）',
+    total_count      INT          NOT NULL DEFAULT 0 COMMENT '本次重算范围（架/项）',
+    success_count    INT          NOT NULL DEFAULT 0,
+    failed_count     INT          NOT NULL DEFAULT 0,
+    na_count         INT          NOT NULL DEFAULT 0 COMMENT '不适用项数（也算处理成功）',
+    fail_inject      VARCHAR(64)  NULL COMMENT '验收用：注入失败的飞机 id 列表（逗号分隔），仅在项目未处理过时失败一次',
+    started_at       DATETIME     NOT NULL,
+    finished_at      DATETIME     NULL,
+    created_by       VARCHAR(32)  NOT NULL,
+    PRIMARY KEY (id),
+    KEY idx_recalc_status (status)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '适航指令批量重算作业';
+
+CREATE TABLE ad_recalc_job_item (
+    id               BIGINT       NOT NULL AUTO_INCREMENT,
+    job_id           BIGINT       NOT NULL,
+    revision_id      BIGINT       NOT NULL,
+    aircraft_id      BIGINT       NOT NULL,
+    status           VARCHAR(16)  NOT NULL COMMENT 'PENDING / SUCCESS / FAILED / NOT_APPLICABLE',
+    error_message    VARCHAR(512) NULL,
+    attempt_count    INT          NOT NULL DEFAULT 0,
+    updated_at       DATETIME     NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_recalc_item (job_id, revision_id, aircraft_id)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '批量重算作业逐机明细';
+
+-- ----------------------- 模块七种子：指令与修订版 --------------------------------
+-- 日期全部用 CURDATE() 表达式，保证任意一天初始化都能命中验收状态
+INSERT INTO ad_directive (id, ad_no, authority, title, latest_revision, created_at, updated_at) VALUES
+    (1,  'CAD-2026-001', 'CAAC 华东局', 'B737 机翼前梁连接螺栓检查', 'R1', DATE_SUB(NOW(), INTERVAL 40 DAY), DATE_SUB(NOW(), INTERVAL 20 DAY)),
+    (2,  'CAD-2025-014', 'CAAC 适航司', 'B737 发动机吊架耐磨衬套时限更换', 'R1', DATE_SUB(NOW(), INTERVAL 90 DAY), DATE_SUB(NOW(), INTERVAL 30 DAY)),
+    (3,  'CAD-2026-007', 'CAAC 华北局', 'B737 前起落架舱门限位钢索检查', 'R1', DATE_SUB(NOW(), INTERVAL 40 DAY), DATE_SUB(NOW(), INTERVAL 20 DAY)),
+    (4,  'CAD-2026-004', 'EASA',        'A320 升降舵后梁铰链点润滑检查', 'R1', DATE_SUB(NOW(), INTERVAL 60 DAY), DATE_SUB(NOW(), INTERVAL 60 DAY)),
+    (5,  'CAD-2026-005', 'CAAC 新疆局', 'ARJ21 高原构型氧气压力发生器寿命核查', 'R1', DATE_SUB(NOW(), INTERVAL 70 DAY), DATE_SUB(NOW(), INTERVAL 10 DAY)),
+    (6,  'CAD-2026-006', 'CAAC 华东局', 'ARJ21 风挡加温控制器软件升级', 'R0', DATE_SUB(NOW(), INTERVAL 20 DAY), DATE_SUB(NOW(), INTERVAL 20 DAY)),
+    (7,  'CAD-2026-008', 'CAAC 适航司', 'A320 燃油箱点火源防护导线复查（阈值矛盾验收）', 'R0', DATE_SUB(NOW(), INTERVAL 20 DAY), DATE_SUB(NOW(), INTERVAL 20 DAY)),
+    (8,  'CAD-2026-009', 'CAAC 华北局', 'A330 客舱应急灯电池容量核查（机号边界不完整验收）', 'R0', DATE_SUB(NOW(), INTERVAL 20 DAY), DATE_SUB(NOW(), INTERVAL 20 DAY)),
+    (9,  'CAD-2026-011', 'FAA',         'B737/A320 飞行控制计算机批次排查', 'R1', DATE_SUB(NOW(), INTERVAL 80 DAY), DATE_SUB(NOW(), INTERVAL 15 DAY)),
+    (10, 'CAD-2026-010', 'CAAC 华东局', '货舱烟雾探测器改装（工卡改挂验收）', 'R1', DATE_SUB(NOW(), INTERVAL 50 DAY), DATE_SUB(NOW(), INTERVAL 6 DAY)),
+    (11, 'CAD-2026-020', 'CAAC 华南局', 'A330 发动机防冰活门管路检查（工卡取消验收）', 'R1', DATE_SUB(NOW(), INTERVAL 50 DAY), DATE_SUB(NOW(), INTERVAL 3 DAY));
+
+-- [AD-01] R1：仅日期阈值，截止 = 今天+20 天，提前 30 天预警 → 全系 6 架 B737 均临期
+INSERT INTO ad_revision (id, directive_id, revision_no, title, status, effective_date, applicable_models,
+                         tail_range_from, tail_range_to, due_date, due_fh, due_cycles,
+                         warn_days, warn_fh, warn_cycles, revision_note, created_at, published_at) VALUES
+    (1, 1, 'R1', 'B737 机翼前梁连接螺栓检查（修订1：扩大全部 B737）', 'EFFECTIVE',
+     DATE_SUB(CURDATE(), INTERVAL 10 DAY), 'B737', NULL, NULL,
+     DATE_ADD(CURDATE(), INTERVAL 20 DAY), NULL, NULL,
+     30, 0, 0, 'R1 将适用范围从部分机号扩大到全部 B737',
+     DATE_SUB(NOW(), INTERVAL 20 DAY), DATE_SUB(NOW(), INTERVAL 20 DAY));
+
+-- [AD-02] R1：FH 25000 / CYC 30000，无日期。B737 各机 FH 余量普遍小于 CYC 余量 → 飞行小时先到期
+INSERT INTO ad_revision (id, directive_id, revision_no, title, status, effective_date, applicable_models,
+                         tail_range_from, tail_range_to, due_date, due_fh, due_cycles,
+                         warn_days, warn_fh, warn_cycles, revision_note, created_at, published_at) VALUES
+    (2, 2, 'R1', 'B737 发动机吊架耐磨衬套时限更换（按累计 FH/CYC 先到为准）', 'EFFECTIVE',
+     DATE_SUB(CURDATE(), INTERVAL 30 DAY), 'B737', NULL, NULL,
+     NULL, 25000.00, 30000,
+     0, 500.00, 2000, 'R1 收紧飞行小时阈值',
+     DATE_SUB(NOW(), INTERVAL 30 DAY), DATE_SUB(NOW(), INTERVAL 30 DAY));
+
+-- [AD-03] R1：FH 33000 / CYC 18500。各 B737 的起落余量更小 → 起落次数先到期
+INSERT INTO ad_revision (id, directive_id, revision_no, title, status, effective_date, applicable_models,
+                         tail_range_from, tail_range_to, due_date, due_fh, due_cycles,
+                         warn_days, warn_fh, warn_cycles, revision_note, created_at, published_at) VALUES
+    (3, 3, 'R1', 'B737 前起落架舱门限位钢索检查（按累计 FH/CYC 先到为准）', 'EFFECTIVE',
+     DATE_SUB(CURDATE(), INTERVAL 10 DAY), 'B737', NULL, NULL,
+     NULL, 33000.00, 18500,
+     0, 3000.00, 800, NULL,
+     DATE_SUB(NOW(), INTERVAL 20 DAY), DATE_SUB(NOW(), INTERVAL 20 DAY));
+
+-- [AD-04] R1：A320 全系，日期截止已过 5 天（超期基准）；7 号机已凭 WC-2026-0201 落实
+INSERT INTO ad_revision (id, directive_id, revision_no, title, status, effective_date, applicable_models,
+                         tail_range_from, tail_range_to, due_date, due_fh, due_cycles,
+                         warn_days, warn_fh, warn_cycles, revision_note, created_at, published_at) VALUES
+    (4, 4, 'R1', 'A320 升降舵后梁铰链点润滑检查', 'EFFECTIVE',
+     DATE_SUB(CURDATE(), INTERVAL 25 DAY), 'A320', NULL, NULL,
+     DATE_SUB(CURDATE(), INTERVAL 5 DAY), NULL, NULL,
+     10, 0, 0, NULL,
+     DATE_SUB(NOW(), INTERVAL 60 DAY), DATE_SUB(NOW(), INTERVAL 60 DAY));
+
+-- [AD-05] R1（当前）：ARJ21 且机号段 11001~11099；旧版 R0 仅 11020~11099（历史冻结行）
+INSERT INTO ad_revision (id, directive_id, revision_no, title, status, effective_date, applicable_models,
+                         tail_range_from, tail_range_to, due_date, due_fh, due_cycles,
+                         warn_days, warn_fh, warn_cycles, revision_note, created_at, published_at) VALUES
+    (5, 5, 'R0', 'ARJ21 氧气压力发生器核查（原版：仅 11020~11099）', 'SUPERSEDED',
+     DATE_SUB(CURDATE(), INTERVAL 40 DAY), 'ARJ21', 'B-11020', 'B-11099',
+     DATE_ADD(CURDATE(), INTERVAL 60 DAY), NULL, NULL,
+     20, 0, 0, '原版，已被 R1 取代',
+     DATE_SUB(NOW(), INTERVAL 60 DAY), DATE_SUB(NOW(), INTERVAL 60 DAY)),
+    (6, 5, 'R1', 'ARJ21 高原构型氧气压力发生器寿命核查（扩段 11001~11099）', 'EFFECTIVE',
+     DATE_SUB(CURDATE(), INTERVAL 5 DAY), 'ARJ21', 'B-11001', 'B-11099',
+     DATE_ADD(CURDATE(), INTERVAL 60 DAY), 10000.00, 11000,
+     20, 600.00, 900, 'R1 扩大机号段并增补 FH/CYC 阈值',
+     DATE_SUB(NOW(), INTERVAL 10 DAY), DATE_SUB(NOW(), INTERVAL 10 DAY));
+
+-- [AD-06] R0：ARJ21 全系，机号范围只填上界（边界不完整）→ 适用机全部待核实
+INSERT INTO ad_revision (id, directive_id, revision_no, title, status, effective_date, applicable_models,
+                         tail_range_from, tail_range_to, due_date, due_fh, due_cycles,
+                         warn_days, warn_fh, warn_cycles, revision_note, created_at, published_at) VALUES
+    (7, 6, 'R0', 'ARJ21 风挡加温控制器软件升级（机号下界待补录）', 'EFFECTIVE',
+     DATE_SUB(CURDATE(), INTERVAL 5 DAY), 'ARJ21', NULL, 'B-11999',
+     DATE_ADD(CURDATE(), INTERVAL 40 DAY), 12000.00, 13000,
+     15, 500.00, 800, '机号范围下界尚未明确，待局方补充',
+     DATE_SUB(NOW(), INTERVAL 20 DAY), DATE_SUB(NOW(), INTERVAL 20 DAY));
+
+-- [AD-07] R0：A320 全系，截止日期早于生效日期（阈值矛盾）→ 待核实
+INSERT INTO ad_revision (id, directive_id, revision_no, title, status, effective_date, applicable_models,
+                         tail_range_from, tail_range_to, due_date, due_fh, due_cycles,
+                         warn_days, warn_fh, warn_cycles, revision_note, created_at, published_at) VALUES
+    (8, 7, 'R0', 'A320 燃油箱点火源防护导线复查（截止日期填报待局方更正）', 'EFFECTIVE',
+     DATE_ADD(CURDATE(), INTERVAL 10 DAY), 'A320', NULL, NULL,
+     DATE_SUB(CURDATE(), INTERVAL 8 DAY), 24000.00, NULL,
+     10, 800.00, 0, '初版日期阈值与生效日期矛盾，待发布勘误',
+     DATE_SUB(NOW(), INTERVAL 20 DAY), DATE_SUB(NOW(), INTERVAL 20 DAY));
+
+-- [AD-08] R0：A330 全系，机号范围只填下界（边界不完整）→ 待核实
+INSERT INTO ad_revision (id, directive_id, revision_no, title, status, effective_date, applicable_models,
+                         tail_range_from, tail_range_to, due_date, due_fh, due_cycles,
+                         warn_days, warn_fh, warn_cycles, revision_note, created_at, published_at) VALUES
+    (9, 8, 'R0', 'A330 客舱应急灯电池容量核查（机号上界待补录）', 'EFFECTIVE',
+     DATE_SUB(CURDATE(), INTERVAL 5 DAY), 'A330', 'B-6000', NULL,
+     DATE_ADD(CURDATE(), INTERVAL 30 DAY), NULL, 12000,
+     10, 0, 1000, '机号范围上界尚未明确',
+     DATE_SUB(NOW(), INTERVAL 20 DAY), DATE_SUB(NOW(), INTERVAL 20 DAY));
+
+-- [AD-09] CAD-2026-011：R0 旧版只适用 B737（已取代冻结）；R1 扩到 B737;A320
+INSERT INTO ad_revision (id, directive_id, revision_no, title, status, effective_date, applicable_models,
+                         tail_range_from, tail_range_to, due_date, due_fh, due_cycles,
+                         warn_days, warn_fh, warn_cycles, revision_note, created_at, published_at) VALUES
+    (10, 9, 'R0', '飞控计算机批次排查（原版仅 B737）', 'SUPERSEDED',
+     DATE_SUB(CURDATE(), INTERVAL 50 DAY), 'B737', NULL, NULL,
+     DATE_ADD(CURDATE(), INTERVAL 90 DAY), NULL, NULL,
+     20, 0, 0, '原版，已被 R1 取代',
+     DATE_SUB(NOW(), INTERVAL 70 DAY), DATE_SUB(NOW(), INTERVAL 70 DAY)),
+    (11, 9, 'R1', '飞控计算机批次排查（修订1：扩展 A320 同批次件号）', 'EFFECTIVE',
+     DATE_SUB(CURDATE(), INTERVAL 5 DAY), 'B737;A320', NULL, NULL,
+     DATE_ADD(CURDATE(), INTERVAL 18 DAY), NULL, NULL,
+     25, 0, 0, 'R1 扩展 A320 适用范围',
+     DATE_SUB(NOW(), INTERVAL 15 DAY), DATE_SUB(NOW(), INTERVAL 15 DAY));
+
+-- [AD-10] R1：B737;A330，CYC 阈值 32000（各机都还远），日期 400 天；3 号机曾凭 0203 落实，0203 已改挂 8 号机
+INSERT INTO ad_revision (id, directive_id, revision_no, title, status, effective_date, applicable_models,
+                         tail_range_from, tail_range_to, due_date, due_fh, due_cycles,
+                         warn_days, warn_fh, warn_cycles, revision_note, created_at, published_at) VALUES
+    (12, 10, 'R1', '货舱烟雾探测器改装（修订1：增补 A330）', 'EFFECTIVE',
+     DATE_SUB(CURDATE(), INTERVAL 3 DAY), 'B737;A330', NULL, NULL,
+     DATE_ADD(CURDATE(), INTERVAL 400 DAY), 60000.00, 32000,
+     30, 1000.00, 1500, 'R1 增补 A330 适用性',
+     DATE_SUB(NOW(), INTERVAL 6 DAY), DATE_SUB(NOW(), INTERVAL 6 DAY));
+
+-- [AD-11] R1：A330，CYC 12000 → 3 号/8 号都超期；3 号机曾关联已取消工卡 0204
+INSERT INTO ad_revision (id, directive_id, revision_no, title, status, effective_date, applicable_models,
+                         tail_range_from, tail_range_to, due_date, due_fh, due_cycles,
+                         warn_days, warn_fh, warn_cycles, revision_note, created_at, published_at) VALUES
+    (13, 11, 'R1', 'A330 发动机防冰活门管路检查', 'EFFECTIVE',
+     DATE_SUB(CURDATE(), INTERVAL 2 DAY), 'A330', NULL, NULL,
+     DATE_ADD(CURDATE(), INTERVAL 200 DAY), NULL, 12000,
+     10, 0, 1000, NULL,
+     DATE_SUB(NOW(), INTERVAL 3 DAY), DATE_SUB(NOW(), INTERVAL 3 DAY));
+
+-- ----------------------- 模块七种子：历史版本/失效关联的落实行 -----------------------
+-- 这些行表达"修订前已落实、修订后历史冻结"与"工卡/证据失效后回待核实"，
+-- 当前生效版本的其余清单行由后端启动引导（AdBootstrap）按最新数据幂等补齐，不手工写死状态。
+
+-- R0（id=5）冻结行：20 号机曾 COMPLIED（工卡 0202 后被重开）；19 号机当时不适用（下界 11020）
+INSERT INTO ad_compliance (id, revision_id, aircraft_id, status, applicable, pending_reasons, limiting_dim,
+                           days_to_due, fh_remaining, cycle_remaining, calc_tick, calc_at, complied_at,
+                           complied_by, created_at, updated_at, version) VALUES
+    (1, 5, 20, 'COMPLIED', 1, NULL, 'DATE', 60, 2200.00, 2550, 0, DATE_SUB(NOW(), INTERVAL 25 DAY),
+     DATE_SUB(NOW(), INTERVAL 25 DAY), '罗建军', DATE_SUB(NOW(), INTERVAL 25 DAY), DATE_SUB(NOW(), INTERVAL 25 DAY), 0),
+    (2, 5, 19, 'NOT_APPLICABLE', 0, NULL, NULL, NULL, NULL, NULL, 0, DATE_SUB(NOW(), INTERVAL 25 DAY),
+     NULL, NULL, DATE_SUB(NOW(), INTERVAL 25 DAY), DATE_SUB(NOW(), INTERVAL 25 DAY), 0);
+
+INSERT INTO ad_compliance_link (id, compliance_id, work_card_id, card_no, linked_aircraft_id, linked_by,
+                                linked_at, valid_flag, invalid_reason, invalidated_at) VALUES
+    (1, 1, 26, 'WC-2026-0202', 20, '罗建军', DATE_SUB(NOW(), INTERVAL 25 DAY), 0,
+     '该工卡关闭后被重新打开（当前状态：待检验），历史落实凭证失效，R0 已冻结留存', DATE_SUB(NOW(), INTERVAL 2 HOUR));
+
+INSERT INTO ad_evidence (id, compliance_id, evidence_type, title, evidence_ref, file_name, registered_by,
+                         registered_at, void_flag, void_reason, voided_at) VALUES
+    (1, 1, 'REGISTER', 'R0 历史落实：工作单签署页编号', 'ARC-R0-20260904-020', NULL, '罗建军',
+     DATE_SUB(NOW(), INTERVAL 25 DAY), 0, NULL, NULL);
+
+INSERT INTO ad_event (directive_id, revision_id, compliance_id, aircraft_id, event_type, operator, detail,
+                      from_status, to_status, event_at) VALUES
+    (5, 5, 1, 20, 'COMPLY', '罗建军', 'R0 版本落实：关联工卡 WC-2026-0202 并登记签署页 ARC-R0-20260904-020',
+     NULL, 'COMPLIED', DATE_SUB(NOW(), INTERVAL 25 DAY)),
+    (5, NULL, NULL, NULL, 'REVISION_PUBLISH', 'SYSTEM', 'R1 生效：机号段扩大为 B-11001~B-11099，R0 及其判断结果冻结保留',
+     NULL, NULL, DATE_SUB(NOW(), INTERVAL 10 DAY)),
+    (5, 5, 1, 20, 'STATUS_CHANGE', 'SYSTEM', '关联工卡 WC-2026-0202 被重新打开，R0 历史凭证标记失效（R0 已冻结，状态仅作历史展示）',
+     'COMPLIED', 'PENDING', DATE_SUB(NOW(), INTERVAL 2 HOUR));
+
+-- R0（id=10）冻结行：CAD-2026-011 旧版仅 B737，1 号机当时临期（历史留存）
+INSERT INTO ad_compliance (id, revision_id, aircraft_id, status, applicable, pending_reasons, limiting_dim,
+                           days_to_due, fh_remaining, cycle_remaining, calc_tick, calc_at, complied_at,
+                           complied_by, created_at, updated_at, version) VALUES
+    (3, 10, 1, 'NEAR_DUE', 1, NULL, 'DATE', 18, NULL, NULL, 0, DATE_SUB(NOW(), INTERVAL 16 DAY),
+     NULL, NULL, DATE_SUB(NOW(), INTERVAL 16 DAY), DATE_SUB(NOW(), INTERVAL 16 DAY), 0);
+
+INSERT INTO ad_event (directive_id, revision_id, compliance_id, aircraft_id, event_type, operator, detail,
+                      from_status, to_status, event_at) VALUES
+    (9, 10, 3, 1, 'STATUS_CHANGE', 'SYSTEM', 'R0 历史计算：1 号机临期（R0 后被 R1 取代，结果冻结）',
+     'NOT_DUE', 'NEAR_DUE', DATE_SUB(NOW(), INTERVAL 16 DAY)),
+    (9, NULL, NULL, NULL, 'REVISION_PUBLISH', 'SYSTEM', 'R1 生效：适用范围扩展为 B737;A320，R0 判断结果与证据保留',
+     NULL, NULL, DATE_SUB(NOW(), INTERVAL 15 DAY));
 
 SET FOREIGN_KEY_CHECKS = 1;

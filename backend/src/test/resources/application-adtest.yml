@@ -1,0 +1,28 @@
+server:
+  port: 0
+
+spring:
+  datasource:
+    url: jdbc:h2:mem:adtest;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE;NON_KEYWORDS=VALUE,YEAR,DAY,HOUR,PERIOD,CYCLE;LOCK_TIMEOUT=3000
+    username: sa
+    password: ""
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+    defer-datasource-initialization: false
+  # 测试使用 JPA 自动建表，不执行生产 MySQL 脚本（CREATE DATABASE/ENGINE 等方言不兼容 H2）
+  sql:
+    init:
+      mode: never
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+
+mro:
+  ad:
+    upload-dir: build/ad-evidence-test

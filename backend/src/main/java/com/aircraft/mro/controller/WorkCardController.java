@@ -71,4 +71,20 @@ public class WorkCardController {
     public ApiResponse<Views.WorkCardView> cancel(@PathVariable("id") Long id) {
         return ApiResponse.success("工卡已取消", workCardService.cancel(id));
     }
+
+    /** 模块七：已关闭工卡重新打开（退回待检验），相关适航指令落实回待核实 */
+    @PostMapping("/{id}/reopen")
+    public ApiResponse<Views.WorkCardView> reopen(@PathVariable("id") Long id,
+                                                  @Valid @RequestBody WorkCardDtos.ReopenReq req) {
+        return ApiResponse.success("工卡已重新打开，相关适航指令落实结果转为待核实",
+                workCardService.reopen(id, req.getOperator()));
+    }
+
+    /** 模块七：工卡改挂到另一架飞机，原机适航指令落实回待核实（关联历史保留） */
+    @PostMapping("/{id}/reassign")
+    public ApiResponse<Views.WorkCardView> reassign(@PathVariable("id") Long id,
+                                                    @Valid @RequestBody WorkCardDtos.ReassignReq req) {
+        return ApiResponse.success("工卡已改挂，原飞机的适航指令落实结果转为待核实",
+                workCardService.reassign(id, req.getTargetAircraftId(), req.getOperator()));
+    }
 }

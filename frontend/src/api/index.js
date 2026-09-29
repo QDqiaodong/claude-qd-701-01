@@ -92,3 +92,38 @@ export const releaseApi = {
   qaApprove: (id, signer) => http.post(`/releases/${id}/qa-approve`, { signer }),
   reject: (id, data) => http.post(`/releases/${id}/reject`, data)
 }
+
+/** 模块七：适航指令落实追踪（适用/到期/落实/重算全部由服务端判定） */
+export const adApi = {
+  overview: () => http.get('/ad/overview'),
+  directives: () => http.get('/ad/directives'),
+  revisions: (id) => http.get(`/ad/directives/${id}/revisions`),
+  createDirective: (data) => http.post('/ad/directives', data),
+  updateDirective: (id, data) => http.post(`/ad/directives/${id}`, data),
+  updateDraft: (id, data) => http.post(`/ad/revisions/${id}/draft`, data),
+  newRevision: (id, data) => http.post(`/ad/directives/${id}/revisions`, data),
+  publish: (id, operator) => http.post(`/ad/revisions/${id}/publish`, { operator }),
+  compliance: (params) => http.get('/ad/compliance', { params }),
+  complianceDetail: (id) => http.get(`/ad/compliance/${id}`),
+  recompute: (id, operator) => http.post(`/ad/compliance/${id}/recompute`, { operator }),
+  comply: (id, data) => http.post(`/ad/compliance/${id}/comply`, data),
+  registerEvidence: (id, data) => http.post(`/ad/compliance/${id}/evidence`, data),
+  uploadEvidence: (id, formData) =>
+    http.post(`/ad/compliance/${id}/evidence-file`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    }),
+  downloadEvidenceUrl: (evidenceId) => `/api/ad/evidence-file/${evidenceId}/download`,
+  voidEvidence: (id, data) => http.post(`/ad/evidence/${id}/void`, data),
+  createJob: (data) => http.post('/ad/recalc-jobs', data),
+  jobs: () => http.get('/ad/recalc-jobs'),
+  job: (id) => http.get(`/ad/recalc-jobs/${id}`),
+  jobItems: (id) => http.get(`/ad/recalc-jobs/${id}/items`),
+  resumeJob: (id) => http.post(`/ad/recalc-jobs/${id}/resume`)
+}
+
+/** 工卡扩展动作（模块七验收：已关闭重开 / 改挂） */
+export const cardAdminApi = {
+  reopen: (id, operator) => http.post(`/work-cards/${id}/reopen`, { operator }),
+  reassign: (id, targetAircraftId, operator) =>
+    http.post(`/work-cards/${id}/reassign`, { targetAircraftId, operator })
+}

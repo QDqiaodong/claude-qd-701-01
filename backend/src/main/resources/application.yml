@@ -30,6 +30,15 @@ spring:
     encoding:
       charset: UTF-8
       force: true
+  # 模块七落实证据文件上传
+  multipart:
+    max-file-size: 20MB
+    max-request-size: 25MB
+
+# 模块七：证据文件落盘目录（容器内 /data，前端通过 /api/ad/evidence-file/{id}/download 回读）
+mro:
+  ad:
+    upload-dir: ${AD_EVIDENCE_DIR:/data/ad-evidence}
 
 logging:
   level:

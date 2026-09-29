@@ -46,6 +46,13 @@ export const navItems = [
     icon: '🛂',
     label: '出厂放行审签',
     hint: '证据快照·三人审签·终审放行后才可出位'
+  },
+  {
+    key: 'ad',
+    path: '/ad',
+    icon: '📜',
+    label: '适航指令追踪',
+    hint: '编号·修订版·三类阈值·落实清单·证据·批量重算'
   }
 ]
 
@@ -57,6 +64,7 @@ const routes = [
   { path: '/defects', name: 'defects', component: () => import('../views/DefectView.vue') },
   { path: '/parts', name: 'parts', component: () => import('../views/PartView.vue') },
   { path: '/release', name: 'release', component: () => import('../views/ReleaseView.vue') },
+  { path: '/ad', name: 'ad', component: () => import('../views/AdView.vue') },
   { path: '/:pathMatch(.*)*', redirect: '/hangar' }
 ]
 
