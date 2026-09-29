@@ -53,4 +53,20 @@ public final class WorkCardDtos {
         @NotBlank(message = "检验员不能为空")
         private String inspector;
     }
+
+    /** 模块七：已关闭工卡重新打开（复检发现需补充作业） */
+    @Data
+    public static class ReopenReq {
+
+        /** 重新打开原因，可空：默认“复检发现需补充作业” */
+        private String reason;
+    }
+
+    /** 模块七：工卡改挂到另一架飞机 */
+    @Data
+    public static class ReassignReq {
+
+        /** 目标飞机 id */
+        private Long aircraftId;
+    }
 }

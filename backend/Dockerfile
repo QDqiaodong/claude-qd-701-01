@@ -24,6 +24,10 @@ ENV LANG=zh_CN.UTF-8 \
     TZ=Asia/Shanghai \
     JAVA_TOOL_OPTIONS="-Dfile.encoding=UTF-8 -Dsun.jnu.encoding=UTF-8"
 
+# 模块七：适航指令落实证据文件的落盘目录（容器内可写）
+RUN mkdir -p /app/evidence && chmod 777 /app/evidence
+ENV EVIDENCE_DIR=/app/evidence
+
 COPY --from=build /app/target/*.jar app.jar
 
 ARG BACKEND_INTERNAL_PORT=8080

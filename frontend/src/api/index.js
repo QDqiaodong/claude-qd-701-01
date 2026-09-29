@@ -53,7 +53,9 @@ export const cardApi = {
   start: (id, executor) => http.post(`/work-cards/${id}/start`, { executor }),
   finish: (id, actualHour) => http.post(`/work-cards/${id}/finish`, actualHour ? { actualHour } : {}),
   inspect: (id, inspector) => http.post(`/work-cards/${id}/inspect`, { inspector }),
-  cancel: (id) => http.post(`/work-cards/${id}/cancel`)
+  cancel: (id) => http.post(`/work-cards/${id}/cancel`),
+  reopen: (id, reason) => http.post(`/work-cards/${id}/reopen`, reason ? { reason } : {}),
+  reassign: (id, aircraftId) => http.post(`/work-cards/${id}/reassign`, { aircraftId })
 }
 
 /** 模块四：故障保留 */
@@ -91,4 +93,34 @@ export const releaseApi = {
   confirmDefect: (id, data) => http.post(`/releases/${id}/confirm-defect`, data),
   qaApprove: (id, signer) => http.post(`/releases/${id}/qa-approve`, { signer }),
   reject: (id, data) => http.post(`/releases/${id}/reject`, data)
+}
+
+/** 模块七：适航指令落实追踪（期限/状态/进度全部服务端判定） */
+export const adApi = {
+  overview: () => http.get('/ad/overview'),
+  directives: () => http.get('/ad/directives'),
+  revisions: (directiveId) => http.get(`/ad/directives/${directiveId}/revisions`),
+  revision: (id) => http.get(`/ad/revisions/${id}`),
+  createDirective: (data) => http.post('/ad/directives', data),
+  revise: (directiveId, data) => http.post(`/ad/directives/${directiveId}/revise`, data),
+  editRevision: (id, data) => http.post(`/ad/revisions/${id}`, data),
+  recompute: (id, operator) => http.post(`/ad/revisions/${id}/recompute`, { operator }),
+  compliances: (params) => http.get('/ad/compliances', { params }),
+  compliance: (id) => http.get(`/ad/compliances/${id}`),
+  closedCards: (aircraftId) => http.get(`/ad/aircraft/${aircraftId}/closed-cards`),
+  // multipart：登记落实（同机已关闭工卡 + 登记凭据或上传文件）
+  comply: (formData) => http.post('/ad/compliances', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  }),
+  linkCard: (id, data) => http.post(`/ad/compliances/${id}/cards`, data),
+  addEvidence: (id, data) => http.post(`/ad/compliances/${id}/evidence`, data),
+  uploadEvidence: (id, formData) => http.post(`/ad/compliances/${id}/evidence-upload`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  }),
+  markEvidenceMissing: (id, data) => http.post(`/ad/evidence/${id}/mark-missing`, data),
+  reverify: (id, data) => http.post(`/ad/compliances/${id}/reverify`, data),
+  events: (params) => http.get('/ad/events', { params }),
+  batches: (revisionId) => http.get('/ad/batches', { params: revisionId ? { revisionId } : {} }),
+  batch: (id) => http.get(`/ad/batches/${id}`),
+  retryBatch: (id, operator) => http.post(`/ad/batches/${id}/retry`, { operator })
 }

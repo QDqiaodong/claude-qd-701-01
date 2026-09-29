@@ -9,7 +9,9 @@ import java.util.Map;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.context.annotation.Lazy;
 
+import com.aircraft.mro.ad.service.AdComplianceCoordinator;
 import com.aircraft.mro.common.BizException;
 import com.aircraft.mro.domain.Aircraft;
 import com.aircraft.mro.domain.Bay;
@@ -35,15 +37,18 @@ public class AircraftService {
     private final WorkCardSummaryRepository summaryRepository;
     private final BayRepository bayRepository;
     private final ReleaseService releaseService;
+    private final AdComplianceCoordinator adComplianceCoordinator;
 
     public AircraftService(AircraftRepository aircraftRepository,
                            WorkCardSummaryRepository summaryRepository,
                            BayRepository bayRepository,
-                           ReleaseService releaseService) {
+                           ReleaseService releaseService,
+                           @Lazy AdComplianceCoordinator adComplianceCoordinator) {
         this.aircraftRepository = aircraftRepository;
         this.summaryRepository = summaryRepository;
         this.bayRepository = bayRepository;
         this.releaseService = releaseService;
+        this.adComplianceCoordinator = adComplianceCoordinator;
     }
 
     @Transactional(readOnly = true)
@@ -117,10 +122,15 @@ public class AircraftService {
         if (!MroDict.isValidModel(model)) {
             throw new BizException("机型只能是 B737 / A320 / A330 / ARJ21，收到的是：" + req.getModel());
         }
-        BigDecimal totalFh = req.getTotalFh() == null ? BigDecimal.ZERO : req.getTotalFh();
-        Integer totalCycles = req.getTotalCycles() == null ? 0 : req.getTotalCycles();
-        if (totalFh.compareTo(BigDecimal.ZERO) < 0 || totalCycles < 0) {
-            throw new BizException("总飞行小时与总起落次数不能为负数");
+        // 累计值允许不传（新引进/交接中，台账缺失）：落 NULL，适航指令判定因此进入待核实；
+        // 传了非负数则按录入值保存
+        BigDecimal totalFh = req.getTotalFh() == null ? null : req.getTotalFh();
+        Integer totalCycles = req.getTotalCycles() == null ? null : req.getTotalCycles();
+        if (totalFh != null && totalFh.compareTo(BigDecimal.ZERO) < 0) {
+            throw new BizException("总飞行小时不能为负数（未录入请留空，不能填负数）");
+        }
+        if (totalCycles != null && totalCycles < 0) {
+            throw new BizException("总起落次数不能为负数（未录入请留空，不能填负数）");
         }
         String airworthy = req.getAirworthy() == null || req.getAirworthy().isBlank()
                 ? "AIRWORTHY"
@@ -179,10 +189,18 @@ public class AircraftService {
         if (hour.compareTo(BigDecimal.ZERO) <= 0 || cycles <= 0) {
             throw new BizException("本次飞行小时与起落次数都必须大于 0");
         }
-        aircraft.setTotalFh(aircraft.getTotalFh().add(hour));
-        aircraft.setTotalCycles(aircraft.getTotalCycles() + cycles);
+        // 累计值允许为 NULL（引进交接、尚未录入）：登记第一次飞行即把累计值从“缺失”变为已知
+        BigDecimal baseFh = aircraft.getTotalFh() == null ? BigDecimal.ZERO : aircraft.getTotalFh();
+        int baseCycles = aircraft.getTotalCycles() == null ? 0 : aircraft.getTotalCycles();
+        aircraft.setTotalFh(baseFh.add(hour));
+        aircraft.setTotalCycles(baseCycles + cycles);
         aircraft.setUpdatedAt(LocalDateTime.now());
-        return toView(aircraftRepository.save(aircraft));
+        aircraft = aircraftRepository.save(aircraft);
+        // 适航指令：只重算受影响这一架飞机的当前生效清单（与本次登记同一事务提交）
+        adComplianceCoordinator.onAircraftFactsChanged(aircraft.getId(),
+                "飞机登记飞行：总飞行小时 +" + hour.stripTrailingZeros().toPlainString()
+                        + "，总起落次数 +" + cycles + "，按最新累计值重算该机适用指令清单");
+        return toView(aircraft);
     }
 
     private Views.AircraftView toView(Aircraft aircraft) {

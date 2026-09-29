@@ -3,7 +3,7 @@
     <section class="panel">
       <div class="panel-head">
         <h3>定检工卡</h3>
-        <span class="panel-sub">状态机：待派工 → 进行中 → 待检验 → 已关闭，待派工/进行中可取消</span>
+        <span class="panel-sub">状态机：待派工 → 进行中 → 待检验 → 已关闭；已关闭可“重新打开”（复检补充作业，会联动适航指令回待核实），未关闭可改挂飞机</span>
         <div class="panel-extra">
           <el-checkbox v-model="onlyCurrent" label="只看当前机号" />
           <el-button size="small" @click="load">刷新</el-button>
@@ -34,13 +34,15 @@
         </el-table-column>
         <el-table-column prop="executor" label="执行人" width="90" />
         <el-table-column prop="inspector" label="检验员" width="90" />
-        <el-table-column label="操作" width="230" fixed="right">
+        <el-table-column label="操作" width="330" fixed="right">
           <template #default="{ row }">
             <el-button v-if="row.status === 'ASSIGNED'" link type="primary" @click="doStart(row)">开工</el-button>
             <el-button v-if="row.status === 'IN_PROGRESS'" link type="warning" @click="doFinish(row)">报完工</el-button>
             <el-button v-if="row.status === 'WAIT_INSP'" link type="success" @click="doInspect(row)">检验关闭</el-button>
             <el-button v-if="row.status === 'ASSIGNED' || row.status === 'IN_PROGRESS'" link type="danger" @click="doCancel(row)">取消</el-button>
-            <span v-if="row.status === 'CLOSED' || row.status === 'CANCELED'" class="muted">终态</span>
+            <el-button v-if="row.status === 'CLOSED'" link type="warning" @click="doReopen(row)">重新打开</el-button>
+            <el-button v-if="row.status !== 'CLOSED' && row.status !== 'CANCELED'" link @click="openReassign(row)">改挂飞机</el-button>
+            <el-tag v-if="row.status === 'CANCELED'" size="small" type="info">终态</el-tag>
           </template>
         </el-table-column>
       </el-table>
@@ -71,6 +73,23 @@
         <el-button type="primary" @click="doCreate">开卡</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="reassignVisible" title="工卡改挂飞机" width="460px">
+      <el-form label-width="90px">
+        <el-form-item label="工卡"><b>{{ reassignRow.cardNo }} {{ reassignRow.title }}</b></el-form-item>
+        <el-form-item label="当前飞机">{{ reassignRow.tailNo }}</el-form-item>
+        <el-form-item label="改挂到">
+          <el-select v-model="reassignAircraftId" filterable placeholder="选择飞机" style="width:100%">
+            <el-option v-for="a in aircraftList" :key="a.id"
+                       :label="a.tailNo + ' · ' + a.model" :value="a.id" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="reassignVisible = false">取消</el-button>
+        <el-button type="primary" @click="doReassign">确认改挂</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -87,6 +106,9 @@ const list = ref([])
 const onlyCurrent = ref(false)
 const createVisible = ref(false)
 const form = ref({ cardNo: '', aircraftId: null, checkType: 'ROUTINE', title: '', plannedHour: 4, executor: '' })
+const reassignVisible = ref(false)
+const reassignRow = ref({})
+const reassignAircraftId = ref(null)
 
 const queryId = computed(() => (onlyCurrent.value ? currentId.value : null))
 
@@ -148,6 +170,29 @@ async function doCancel(row) {
   await ElMessageBox.confirm(`确认取消工卡 ${row.cardNo}？`, '取消工卡', { type: 'warning' })
   await cardApi.cancel(row.id)
   ElMessage.success('工卡已取消')
+  await load()
+}
+
+async function doReopen(row) {
+  const { value } = await ElMessageBox.prompt(
+    `重新打开工卡 ${row.cardNo}（复检发现需补充作业）。以它为依据的适航指令落实结果将自动转为待核实，请填写原因：`,
+    '重新打开工卡', { inputValue: '复检发现需补充作业', confirmButtonText: '重新打开', cancelButtonText: '取消' })
+  await cardApi.reopen(row.id, value)
+  ElMessage.success('工卡已重新打开，关联的适航指令结果已转为待核实')
+  await load()
+}
+
+function openReassign(row) {
+  reassignRow.value = row
+  reassignAircraftId.value = null
+  reassignVisible.value = true
+}
+
+async function doReassign() {
+  if (!reassignAircraftId.value) return ElMessage.warning('请选择目标飞机')
+  await cardApi.reassign(reassignRow.value.id, reassignAircraftId.value)
+  ElMessage.success('工卡已改挂，相关适航指令清单已重算')
+  reassignVisible.value = false
   await load()
 }
 

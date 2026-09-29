@@ -13,7 +13,9 @@ import java.util.Map;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.context.annotation.Lazy;
 
+import com.aircraft.mro.ad.service.AdComplianceCoordinator;
 import com.aircraft.mro.common.BizException;
 import com.aircraft.mro.domain.Aircraft;
 import com.aircraft.mro.domain.MroDict;
@@ -47,12 +49,15 @@ public class WorkCardService {
     private final WorkCardRepository workCardRepository;
     private final AircraftRepository aircraftRepository;
     private final ReleaseService releaseService;
+    private final AdComplianceCoordinator adComplianceCoordinator;
 
     public WorkCardService(WorkCardRepository workCardRepository, AircraftRepository aircraftRepository,
-                           ReleaseService releaseService) {
+                           ReleaseService releaseService,
+                           @Lazy AdComplianceCoordinator adComplianceCoordinator) {
         this.workCardRepository = workCardRepository;
         this.aircraftRepository = aircraftRepository;
         this.releaseService = releaseService;
+        this.adComplianceCoordinator = adComplianceCoordinator;
     }
 
     @Transactional(readOnly = true)
@@ -225,6 +230,9 @@ public class WorkCardService {
         card = workCardRepository.save(card);
         releaseService.invalidateOnFactChange(card.getAircraftId(),
                 "关联工卡 " + card.getCardNo() + " 已检验关闭");
+        // 新关闭的工卡可能成为待核实落实记录的有效依据：按最新事实复核一次
+        adComplianceCoordinator.onWorkCardChanged(card.getId(),
+                "工卡 " + card.getCardNo() + " 已检验关闭");
         return toView(card, tailMap());
     }
 
@@ -238,6 +246,66 @@ public class WorkCardService {
         card = workCardRepository.save(card);
         releaseService.invalidateOnFactChange(card.getAircraftId(),
                 "关联工卡 " + card.getCardNo() + " 被取消");
+        // 适航指令：以该卡为已关闭依据的落实结果立即回待核实（历史关联保留）
+        adComplianceCoordinator.onWorkCardChanged(card.getId(),
+                "关联工卡 " + card.getCardNo() + " 被取消");
+        return toView(card, tailMap());
+    }
+
+    /**
+     * 已关闭 → 重新打开（回到进行中）：复检发现需要补充作业时使用。
+     * 已取消是终态不能重开。以该卡为落实依据的适航指令结果同步回待核实。
+     */
+    @Transactional
+    public Views.WorkCardView reopen(Long id, WorkCardDtos.ReopenReq req) {
+        WorkCard card = requireCard(id);
+        requireFlow(card, "IN_PROGRESS");
+        String reason = req == null || req.getReason() == null || req.getReason().isBlank()
+                ? "复检发现需补充作业" : req.getReason().trim();
+        card.setStatus("IN_PROGRESS");
+        card.setInspector(null);
+        card.setUpdatedAt(LocalDateTime.now());
+        card = workCardRepository.save(card);
+        releaseService.invalidateOnFactChange(card.getAircraftId(),
+                "关联工卡 " + card.getCardNo() + " 已关闭后被重新打开");
+        adComplianceCoordinator.onWorkCardChanged(card.getId(),
+                "关联工卡 " + card.getCardNo() + " 已关闭后重新打开为进行中（原因：" + reason + "）");
+        return toView(card, tailMap());
+    }
+
+    /**
+     * 改挂工卡到另一架飞机（挂错机的纠正操作）。已取消/已关闭工卡不允许改挂；
+     * 原飞机若以它为落实依据，结果回待核实；新飞机的指令清单按最新事实重算。
+     */
+    @Transactional
+    public Views.WorkCardView reassign(Long id, WorkCardDtos.ReassignReq req) {
+        WorkCard card = requireCard(id);
+        if (req == null || req.getAircraftId() == null) {
+            throw new BizException("请选择要改挂到的飞机");
+        }
+        Long oldAircraftId = card.getAircraftId();
+        if (oldAircraftId.equals(req.getAircraftId())) {
+            throw new BizException("工卡 " + card.getCardNo() + " 本来就挂在这架飞机上，无需改挂");
+        }
+        if ("CLOSED".equals(card.getStatus()) || "CANCELED".equals(card.getStatus())) {
+            throw new BizException("工卡 " + card.getCardNo() + " 已" + MroDict.cardStatusName(card.getStatus())
+                    + "，不能再改挂飞机");
+        }
+        Aircraft target = aircraftRepository.findById(req.getAircraftId())
+                .orElseThrow(() -> new BizException("飞机不存在：id=" + req.getAircraftId()));
+        if (MroDict.AIRWORTHY_STORED.equals(target.getAirworthy())) {
+            throw new BizException("飞机 " + target.getTailNo() + " 处于封存状态，不能把工卡改挂过去");
+        }
+        card.setAircraftId(target.getId());
+        card.setUpdatedAt(LocalDateTime.now());
+        card = workCardRepository.save(card);
+        releaseService.invalidateOnFactChange(oldAircraftId,
+                "关联工卡 " + card.getCardNo() + " 已改挂到 " + target.getTailNo());
+        releaseService.invalidateOnFactChange(target.getId(),
+                "工卡 " + card.getCardNo() + " 由其他飞机改挂入本机");
+        // 适航指令：旧机的落实依据失效，新机按最新事实重算
+        adComplianceCoordinator.onWorkCardChanged(card.getId(),
+                "工卡 " + card.getCardNo() + " 已改挂到 " + target.getTailNo());
         return toView(card, tailMap());
     }
 

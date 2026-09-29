@@ -46,6 +46,13 @@ export const navItems = [
     icon: '🛂',
     label: '出厂放行审签',
     hint: '证据快照·三人审签·终审放行后才可出位'
+  },
+  {
+    key: 'airworthiness',
+    path: '/airworthiness',
+    icon: '📜',
+    label: '适航指令追踪',
+    hint: '修订版·适用范围·三类阈值余量·落实证据·批量重算'
   }
 ]
 
@@ -57,6 +64,7 @@ const routes = [
   { path: '/defects', name: 'defects', component: () => import('../views/DefectView.vue') },
   { path: '/parts', name: 'parts', component: () => import('../views/PartView.vue') },
   { path: '/release', name: 'release', component: () => import('../views/ReleaseView.vue') },
+  { path: '/airworthiness', name: 'airworthiness', component: () => import('../views/AirworthinessView.vue') },
   { path: '/:pathMatch(.*)*', redirect: '/hangar' }
 ]
 

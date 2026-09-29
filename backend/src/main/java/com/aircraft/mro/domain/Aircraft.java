@@ -32,12 +32,12 @@ public class Aircraft {
     @Column(name = "airline", nullable = false, length = 64)
     private String airline;
 
-    /** 总飞行小时 */
-    @Column(name = "total_fh", nullable = false, precision = 12, scale = 2)
+    /** 总飞行小时；NULL 表示尚未录入（适航指令判断因此进入待核实） */
+    @Column(name = "total_fh", precision = 12, scale = 2)
     private BigDecimal totalFh;
 
-    /** 总起落次数 */
-    @Column(name = "total_cycles", nullable = false)
+    /** 总起落次数；NULL 表示尚未录入 */
+    @Column(name = "total_cycles")
     private Integer totalCycles;
 
     /** AIRWORTHY 适航 / GROUNDED 停场待修 / INSPECTION 定检中 / STORED 封存 */

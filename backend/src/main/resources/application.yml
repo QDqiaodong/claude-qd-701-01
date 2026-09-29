@@ -27,9 +27,17 @@ spring:
     serialization:
       write-dates-as-timestamps: false
   servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 25MB
     encoding:
       charset: UTF-8
       force: true
+
+# 模块七：适航指令落实证据文件的服务端存储目录（容器内，相对工作目录）
+mro:
+  evidence:
+    dir: ${EVIDENCE_DIR:evidence}
 
 logging:
   level:

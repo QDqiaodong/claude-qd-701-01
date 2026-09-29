@@ -14,8 +14,18 @@
         <el-table-column prop="tailNo" label="机号" width="100" />
         <el-table-column prop="model" label="机型" width="80" />
         <el-table-column prop="airline" label="所属航司" width="150" />
-        <el-table-column prop="totalFh" label="总飞行小时" width="120" />
-        <el-table-column prop="totalCycles" label="总起落次数" width="110" />
+        <el-table-column label="总飞行小时" width="120">
+          <template #default="{ row }">
+            <span v-if="row.totalFh === null || row.totalFh === undefined" class="muted">未录入</span>
+            <span v-else>{{ row.totalFh }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="总起落次数" width="110">
+          <template #default="{ row }">
+            <span v-if="row.totalCycles === null || row.totalCycles === undefined" class="muted">未录入</span>
+            <span v-else>{{ row.totalCycles }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="适航状态" width="110">
           <template #default="{ row }">
             <el-tag size="small" :type="tagType(row.airworthy)">{{ row.airworthyName }}</el-tag>
@@ -49,8 +59,8 @@
           </el-select>
         </el-form-item>
         <el-form-item label="所属航司"><el-input v-model="form.airline" /></el-form-item>
-        <el-form-item label="总飞行小时"><el-input-number v-model="form.totalFh" :min="0" :step="100" /></el-form-item>
-        <el-form-item label="总起落次数"><el-input-number v-model="form.totalCycles" :min="0" :step="100" /></el-form-item>
+        <el-form-item label="总飞行小时"><el-input-number v-model="form.totalFh" :min="0" :step="100" placeholder="未录入留空" /></el-form-item>
+        <el-form-item label="总起落次数"><el-input-number v-model="form.totalCycles" :min="0" :step="100" placeholder="未录入留空" /></el-form-item>
         <el-form-item label="备注"><el-input v-model="form.note" /></el-form-item>
       </el-form>
       <template #footer>
@@ -109,7 +119,7 @@ const actRow = ref({})
 const airworthy = ref('AIRWORTHY')
 const flightHour = ref(4)
 const cycles = ref(2)
-const form = ref({ tailNo: '', model: 'B737', airline: '', totalFh: 0, totalCycles: 0, note: '' })
+const form = ref({ tailNo: '', model: 'B737', airline: '', totalFh: null, totalCycles: null, note: '' })
 
 function tagType(code) {
   return { AIRWORTHY: 'success', GROUNDED: 'danger', INSPECTION: 'warning', STORED: 'info' }[code] || 'info'
@@ -125,7 +135,7 @@ async function load() {
 }
 
 function openCreate() {
-  form.value = { tailNo: '', model: 'B737', airline: '', totalFh: 0, totalCycles: 0, note: '' }
+  form.value = { tailNo: '', model: 'B737', airline: '', totalFh: null, totalCycles: null, note: '' }
   createVisible.value = true
 }
 

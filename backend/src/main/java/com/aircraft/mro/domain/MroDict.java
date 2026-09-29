@@ -21,6 +21,12 @@ public final class MroDict {
             "A330", BigDecimal.valueOf(63.7),
             "ARJ21", BigDecimal.valueOf(33.5));
 
+    private static final Map<String, String> MODEL_NAME = Map.of(
+            "B737", "波音 737",
+            "A320", "空客 A320",
+            "A330", "空客 A330",
+            "ARJ21", "ARJ21 支线机");
+
     /** 机位尺寸等级 → 允许停放的机型 */
     private static final Map<String, List<String>> SIZE_FIT = Map.of(
             "A", List.of("B737", "A320", "A330", "ARJ21"),
@@ -75,7 +81,9 @@ public final class MroDict {
             "ASSIGNED", List.of("IN_PROGRESS", "CANCELED"),
             "IN_PROGRESS", List.of("WAIT_INSP", "CANCELED"),
             "WAIT_INSP", List.of("CLOSED"),
-            "CLOSED", List.of(),
+            // 模块七：已关闭工卡在复检发现需补充作业时可“重新打开”（回到进行中），
+            // 以它为落实依据的适航指令结果会因此回待核实；已取消仍是终态
+            "CLOSED", List.of("IN_PROGRESS"),
             "CANCELED", List.of());
 
     /** 单张工卡实际工时上限 */
@@ -135,6 +143,10 @@ public final class MroDict {
 
     public static BigDecimal modelLength(String model) {
         return MODEL_LENGTH.getOrDefault(model, BigDecimal.ZERO);
+    }
+
+    public static String modelNameOrSelf(String model) {
+        return model == null ? "" : MODEL_NAME.getOrDefault(model, model);
     }
 
     public static boolean isValidSizeClass(String sizeClass) {
